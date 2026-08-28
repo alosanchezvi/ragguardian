@@ -18,10 +18,13 @@ app = FastAPI(title="Guardián del Páramo API", version="1.0")
 
 # ⚠️ ACTUALIZA estos orígenes cuando tengas las URLs reales
 ORIGENES_PERMITIDOS = [
-    "https://TU-USUARIO.github.io",
-    "https://TU-USUARIO.github.io/TU-REPO",
-    "http://localhost:8000",       # pruebas locales del widget
+    "https://camping-frailejon.ruta-frailejon-pais-alturas.workers.dev",
+    "https://a1b2c3d4.ngrok-free.app",
+    "http://localhost:8000",
+    "http://127.0.0.1:5500",
 ]
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ORIGENES_PERMITIDOS,

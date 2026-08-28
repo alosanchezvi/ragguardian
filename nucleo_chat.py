@@ -1,17 +1,17 @@
 """
 =====================================================================
- NÚCLEO DEL CHATBOT RAG — Guardián del Páramo (edición SERVIDOR)
+ NÚCLEO DEL CHATBOT RAG — Guardián del Páramo (edición QDRANT CLOUD)
 =====================================================================
- · Qdrant en SOLO LECTURA (la BD se sube ya construida)
- · Embeddings locales para las consultas (gratis, privados)
- · LLM = Groq Cloud en STREAMING (gratuito, ultra-rápido, online)
+ · Qdrant Cloud (Cluster remoto HTTPS)
+ · Embeddings locales/servidor (sentence-transformers)
+ · LLM = Groq Cloud en STREAMING (gratuito, ultra-rápido)
 =====================================================================
 """
 
 import os
 os.environ.setdefault("PYTHONUTF8", "1")
 
-# Carga opcional de .env (útil solo en pruebas locales)
+# Carga opcional de .env
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -24,8 +24,9 @@ import requests
 from pathlib import Path
 from typing import List, Optional, Generator
 
-BASE_DIR = Path(__file__).parent          # ← relativo al archivo (vital en Docker)
-QDRANT_PATH = BASE_DIR / "qdrant_db"
+# Configuración de Qdrant Cloud y Groq
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 COLLECTION_NAME = "conocimiento_paramo"
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
@@ -217,6 +218,7 @@ contar es cómo hace un suelo que parece solo tierra para volverse alcancía de 
 {contexto}
 </conocimiento_recuperado>"""
 
+
 class MotorRAG:
     _instancia: Optional["MotorRAG"] = None
 
@@ -225,22 +227,32 @@ class MotorRAG:
         from langchain_qdrant import QdrantVectorStore
         from qdrant_client import QdrantClient
 
-        print("Cargando embeddings...")
+        if not QDRANT_URL or not QDRANT_API_KEY:
+            raise ValueError("Faltan las variables de entorno QDRANT_URL o QDRANT_API_KEY.")
+
+        print("Cargando modelo de embeddings...")
         self.embedding_model = HuggingFaceEmbeddings(
             model_name=EMBEDDING_MODEL_NAME,
             model_kwargs={"device": "cpu"},
             encode_kwargs={"normalize_embeddings": True},
         )
-        self.client = QdrantClient(path=str(QDRANT_PATH))
+        
+        print("Conectando con Qdrant Cloud...")
+        self.client = QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY
+        )
+        
         self.vectorstore = QdrantVectorStore(
             client=self.client,
             collection_name=COLLECTION_NAME,
             embedding=self.embedding_model,
         )
+        
         conteo = self.client.count(COLLECTION_NAME, exact=True).count
         if conteo == 0:
-            raise RuntimeError("La colección está vacía: falta subir qdrant_db/")
-        print(f"Base de conocimiento lista: {conteo} chunks.")
+            raise RuntimeError(f"La colección '{COLLECTION_NAME}' en Qdrant Cloud está vacía.")
+        print(f"Base de conocimiento conectada a Qdrant Cloud: {conteo} chunks.")
 
     @classmethod
     def obtener(cls) -> "MotorRAG":
@@ -293,8 +305,8 @@ def responder_stream(pregunta: str,
                      filtro_tema: Optional[str] = None) -> Generator[str, None, None]:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        yield "⚠️ Error de configuración del servidor: falta GROQ_API_KEY."
-        yield "\n\n⟪FUENTES::[]⟫"
+        yield json.dumps({"t": "⚠️ Error de configuración del servidor: falta GROQ_API_KEY."}) + "\n"
+        yield json.dumps({"sources": []}) + "\n"
         return
 
     contexto, fuentes = recuperar_contexto(pregunta, filtro_tema)
@@ -321,24 +333,23 @@ def responder_stream(pregunta: str,
                 stream=True, timeout=(10, 120))
             if respuesta_api.status_code == 429:
                 espera = min(2 ** intento, 10)
-                print(f"Rate limit Groq; reintento en {espera}s")
                 time.sleep(espera)
                 continue
             respuesta_api.raise_for_status()
             break
         except Exception as e:
             if intento == INTENTOS_GROQ:
-                yield "⚠️ El servicio de IA no respondió. Intenta de nuevo en unos segundos."
-                yield "\n\n⟪FUENTES::" + json.dumps(fuentes, ensure_ascii=False) + "⟫"
+                yield json.dumps({"t": "⚠️ El servicio de IA no respondió. Intenta de nuevo."}) + "\n"
+                yield json.dumps({"sources": fuentes}) + "\n"
                 return
-            print(f"Intento {intento} falló: {e}")
             time.sleep(2 ** intento)
 
     if respuesta_api is None or not respuesta_api.ok:
-        yield "⚠️ Servicio temporalmente saturado. Intenta en unos segundos."
-        yield "\n\n⟪FUENTES::" + json.dumps(fuentes, ensure_ascii=False) + "⟫"
+        yield json.dumps({"t": "⚠️ Servicio temporalmente saturado. Intenta en unos segundos."}) + "\n"
+        yield json.dumps({"sources": fuentes}) + "\n"
         return
 
+    # Emisión en formato NDJSON para que coincida exactamente con tu Cloudflare Worker
     for linea in respuesta_api.iter_lines():
         if not linea:
             continue
@@ -354,6 +365,7 @@ def responder_stream(pregunta: str,
             continue
         trozo = ((dato.get("choices") or [{}])[0].get("delta") or {}).get("content", "")
         if trozo:
-            yield trozo
+            yield json.dumps({"t": trozo}) + "\n"
 
-    yield "\n\n⟪FUENTES::" + json.dumps(fuentes, ensure_ascii=False) + "⟫"
+    # Enviar las fuentes al final en formato NDJSON
+    yield json.dumps({"sources": fuentes}) + "\n"
