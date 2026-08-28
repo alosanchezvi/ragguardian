@@ -14,7 +14,6 @@ from typing import List, Optional, Generator
 
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-HF_TOKEN = os.getenv("HF_TOKEN")  # ⬅️ Nueva clave requerida
 COLLECTION_NAME = "conocimiento_paramo"
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
@@ -23,7 +22,6 @@ CHAT_MODEL = "qwen/qwen3.6-27b"
 TEMPERATURA = 0.5
 CHUNKS_A_RECUPERAR = 6
 MAX_TURNOS_HISTORIAL = 4
-INTENTOS_GROQ = 3
 
 SYSTEM_PROMPT = """Eres el «Guardián del Páramo», asistente virtual cálido, cercano y riguroso, \
 experto en TODOS los temas de tu base de conocimiento: el ecosistema del páramo, el retamo \
@@ -127,19 +125,18 @@ class MotorRAG:
     _instancia: Optional["MotorRAG"] = None
 
     def __init__(self):
-        from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
+        from langchain_huggingface import HuggingFaceEmbeddings
         from langchain_qdrant import QdrantVectorStore
         from qdrant_client import QdrantClient
 
         if not QDRANT_URL or not QDRANT_API_KEY:
-            raise ValueError("Faltan QDRANT_URL o QDRANT_API_KEY.")
-        if not HF_TOKEN:
-            raise ValueError("Falta HF_TOKEN. Créalo en Hugging Face y añádelo en Render.")
+            raise ValueError("Faltan QDRANT_URL o QDRANT_API_KEY en las variables de entorno.")
 
-        print("Conectando con API de Embeddings (HF)...")
-        self.embedding_model = HuggingFaceInferenceAPIEmbeddings(
-            api_key=HF_TOKEN,
-            model_name=EMBEDDING_MODEL_NAME
+        print("Cargando modelo de embeddings localmente (CPU)...")
+        self.embedding_model = HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL_NAME,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
         )
         
         print("Conectando con Qdrant Cloud...")
