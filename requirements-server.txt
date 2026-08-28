@@ -1,7 +1,9 @@
 fastapi
 uvicorn[standard]
 pydantic
+python-multipart
 requests
 python-dotenv
 qdrant-client
 langchain-qdrant
+
