@@ -67,11 +67,6 @@ def get_temas():
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    """
-    Recibe la pregunta del usuario y devuelve la respuesta del RAG
-    en NDJSON streaming. El widget la lee palabra por palabra.
-    """
-    # Convertimos el historial del widget al formato que espera tu núcleo
     historial_dicts = None
     if req.historial:
         historial_dicts = [
@@ -79,7 +74,7 @@ async def chat(req: ChatRequest):
             for m in req.historial
         ]
 
-    # Llamamos directamente a tu generador responder_stream
+    # Tu núcleo ya devuelve un generador con yields de JSON + "\n"
     generador = responder_stream(
         pregunta=req.pregunta,
         historial=historial_dicts,
@@ -89,9 +84,8 @@ async def chat(req: ChatRequest):
     return StreamingResponse(
         generador,
         media_type="application/x-ndjson",
-        headers={"X-Accel-Buffering": "no"}   # evita buffering en proxies
+        headers={"X-Accel-Buffering": "no"}
     )
-
 
 # ── 4. ARRANQUE ────────────────────────────────────────────────────
 if __name__ == "__main__":
