@@ -5,6 +5,3 @@ requests
 python-dotenv
 qdrant-client
 langchain-qdrant
-langchain-huggingface
-sentence-transformers
-torch

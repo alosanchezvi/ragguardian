@@ -8,12 +8,12 @@ except ImportError:
     pass
 
 import json
-import time
 import requests
 from typing import List, Optional, Generator
 
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")
 COLLECTION_NAME = "conocimiento_paramo"
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
@@ -82,7 +82,7 @@ La picardía vive en la ternura, no en la grosería.
 · Despedidas: «que esté muy bien», «vaya con Dios» (tono rural), «cualquier cosita me \
 cuenta», «aquí le estoy al pendiente»
 · Escena y analogías cotidianas permitidas: tomar un tinto, una aguapanela caliente, la \
-ruana contra el frío, la mochila al hombro, un chocolate completo, la arepa de la mañana. \
+ruana contra el extranjero, la mochila al hombro, un chocolate completo, la arepa de la mañana. \
 Son referencias culturales de ambiente, NO datos técnicos: úsalas para crear atmósfera, \
 jamás como hechos del contexto.
 
@@ -121,22 +121,40 @@ Si no está en el contexto, dilo de frente: «Uy, ahí sí le quedo mal...»
 {contexto}
 </conocimiento_recuperado>"""
 
+
+# Clase adaptadora limpia compatible con LangChain sin sobrecargar RAM
+class CustomHuggingFaceAPIEmbeddings:
+    def __init__(self, api_key: str, model_name: str):
+        self.api_key = api_key
+        self.api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_name}"
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        response = requests.post(self.api_url, headers=headers, json={"inputs": texts, "options": {"wait_for_model": True}})
+        if response.status_code != 200:
+            raise Exception(f"Error en API de Hugging Face: {response.text}")
+        return response.json()
+
+    def embed_query(self, text: str) -> List[float]:
+        return self.embed_documents([text])[0]
+
+
 class MotorRAG:
     _instancia: Optional["MotorRAG"] = None
 
     def __init__(self):
-        from langchain_huggingface import HuggingFaceEmbeddings
         from langchain_qdrant import QdrantVectorStore
         from qdrant_client import QdrantClient
 
         if not QDRANT_URL or not QDRANT_API_KEY:
-            raise ValueError("Faltan QDRANT_URL o QDRANT_API_KEY en las variables de entorno.")
+            raise ValueError("Faltan QDRANT_URL o QDRANT_API_KEY.")
+        if not HF_TOKEN:
+            raise ValueError("Falta HF_TOKEN en las variables de entorno de Render.")
 
-        print("Cargando modelo de embeddings localmente (CPU)...")
-        self.embedding_model = HuggingFaceEmbeddings(
-            model_name=EMBEDDING_MODEL_NAME,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
+        print("Conectando con API de Embeddings (HF Custom)...")
+        self.embedding_model = CustomHuggingFaceAPIEmbeddings(
+            api_key=HF_TOKEN,
+            model_name=EMBEDDING_MODEL_NAME
         )
         
         print("Conectando con Qdrant Cloud...")
