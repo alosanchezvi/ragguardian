@@ -1,9 +1,10 @@
 """
 API del Guardián del Páramo — endpoints:
-  POST /chat    → streaming NDJSON ({\"t\": \"trozo\"} por línea)
+  POST /chat    → streaming NDJSON ({"t": "trozo"} por línea y {"sources": [...]})
   GET  /temas   → temas disponibles
   GET  /health  → ping anti-sleep
 """
+import os
 import json
 from typing import Optional
 
@@ -16,19 +17,13 @@ import nucleo_chat as core
 
 app = FastAPI(title="Guardián del Páramo API", version="1.0")
 
-# ⚠️ ACTUALIZA estos orígenes cuando tengas las URLs reales
-ORIGENES_PERMITIDOS = [
-    "https://camping-frailejon.ruta-frailejon-pais-alturas.workers.dev",
-    "https://a1b2c3d4.ngrok-free.app",
-    "http://localhost:8000",
-    "http://127.0.0.1:5500",
-]
-
-
+# Permitir todos los orígenes ("*") es la opción más segura 
+# para evitar bloqueos de CORS desde Cloudflare Workers/Pages
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ORIGENES_PERMITIDOS,
-    allow_methods=["GET", "POST"],
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -57,12 +52,16 @@ def temas():
 @app.post("/chat")
 def chat(p: PeticionChat):
     def generador():
-        for trozo in core.responder_stream(p.pregunta, p.historial, p.tema):
-            yield json.dumps({"t": trozo}, ensure_ascii=False) + "\n"
+        # core.responder_stream YA entrega el string formateado como NDJSON
+        # ("{"t": "texto"}\n") por lo que solo debemos hacer yield directamente.
+        for linea_ndjson in core.responder_stream(p.pregunta, p.historial, p.tema):
+            yield linea_ndjson
 
     return StreamingResponse(generador(), media_type="application/x-ndjson")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    # Render asigna dinámicamente el puerto a través de la variable de entorno $PORT
+    puerto = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=puerto)
