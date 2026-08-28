@@ -11,6 +11,8 @@ import json
 import requests
 from typing import List, Optional, Generator
 
+from langchain_core.embeddings import Embeddings  # <-- FIX: herencia requerida por Qdrant
+
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -122,7 +124,7 @@ Si no está en el contexto, dilo de frente: «Uy, ahí sí le quedo mal...»
 </conocimiento_recuperado>"""
 
 
-class CustomHuggingFaceAPIEmbeddings:
+class CustomHuggingFaceAPIEmbeddings(Embeddings):  # <-- FIX: hereda de Embeddings
     def __init__(self, api_key: str, model_name: str):
         self.api_key = api_key
         self.api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_name}"
@@ -155,16 +157,16 @@ class MotorRAG:
             api_key=HF_TOKEN,
             model_name=EMBEDDING_MODEL_NAME
         )
-        
+
         print("Conectando con Qdrant Cloud...")
         self.client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-        
+
         self.vectorstore = QdrantVectorStore(
             client=self.client,
             collection_name=COLLECTION_NAME,
             embedding=self.embedding_model,
         )
-        
+
         conteo = self.client.count(COLLECTION_NAME, exact=True).count
         print(f"Base lista. Chunks en nube: {conteo}.")
 
