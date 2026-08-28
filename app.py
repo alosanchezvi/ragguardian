@@ -1,67 +1,54 @@
-"""
-API del Guardián del Páramo — endpoints:
-  POST /chat    → streaming NDJSON ({"t": "trozo"} por línea y {"sources": [...]})
-  GET  /temas   → temas disponibles
-  GET  /health  → ping anti-sleep
-"""
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+from typing import List, Optional
 import os
 import json
-from typing import Optional
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-
 import nucleo_chat as core
 
-app = FastAPI(title="Guardián del Páramo API", version="1.0")
+app = FastAPI(title="Guardián del Páramo RAG")
 
-# Permitir todos los orígenes ("*") es la opción más segura 
-# para evitar bloqueos de CORS desde Cloudflare Workers/Pages
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
-)
-
-
-class PeticionChat(BaseModel):
-    pregunta: str = Field(min_length=2, max_length=500)
-    tema: Optional[str] = None
-    historial: list = Field(default_factory=list, max_length=12)
-
+# Montar carpetas estáticas y templates si los usas
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates") if os.path.exists("templates") else None
 
 @app.on_event("startup")
 def arrancar():
-    core.MotorRAG.obtener()          # carga Qdrant + embeddings UNA sola vez
+    # Inicializa Qdrant una sola vez al arrancar de forma controlada
+    try:
+        core.MotorRAG.obtener()
+    except Exception as e:
+        print(f"Aviso en startup: {e}")
 
+class PreguntaRequest(BaseModel):
+    pregunta: str
+    historial: Optional[List[dict]] = None
+    filtro_tema: Optional[str] = None
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+@app.post("/api/chat")
+def chat(body: PreguntaRequest):
+    return StreamingResponse(
+        core.responder_stream(body.pregunta, body.historial, body.filtro_tema),
+        media_type="text/event-stream"
+    )
 
-
-@app.get("/temas")
+@app.get("/api/temas")
 def temas():
-    return {"temas": core.listar_temas()}
+    try:
+        return {"temas": core.listar_temas()}
+    except Exception:
+        return {"temas": []}
 
-
-@app.post("/chat")
-def chat(p: PeticionChat):
-    def generador():
-        # core.responder_stream YA entrega el string formateado como NDJSON
-        # ("{"t": "texto"}\n") por lo que solo debemos hacer yield directamente.
-        for linea_ndjson in core.responder_stream(p.pregunta, p.historial, p.tema):
-            yield linea_ndjson
-
-    return StreamingResponse(generador(), media_type="application/x-ndjson")
-
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    if templates and os.path.exists("templates/index.html"):
+        return templates.TemplateResponse("index.html", {"request": request})
+    return HTMLResponse("<h3>Servidor del Guardián del Páramo activo correctamente.</h3>")
 
 if __name__ == "__main__":
     import uvicorn
-    # Render asigna dinámicamente el puerto a través de la variable de entorno $PORT
-    puerto = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=puerto)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("app:app", host="0.0.0.0", port=port)
