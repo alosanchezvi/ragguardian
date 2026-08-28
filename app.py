@@ -1,54 +1,84 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
-from typing import List, Optional
 import os
-import json
-import nucleo_chat as core
+from contextlib import asynccontextmanager
+from typing import Optional, List
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-app = FastAPI(title="Guardián del Páramo RAG")
+# ------------------------------------------------------------------
+# 1. ARRANQUE INMEDIATO: nada pesado a nivel global
+# ------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # No precargamos motor; solo abrimos el puerto YA para Render
+    yield
+    # Limpieza futura aquí si la necesita
 
-# Montar carpetas estáticas y templates si los usas
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates") if os.path.exists("templates") else None
+app = FastAPI(title="Guardián del Páramo", lifespan=lifespan)
 
-@app.on_event("startup")
-def arrancar():
-    # Inicializa Qdrant una sola vez al arrancar de forma controlada
-    try:
-        core.MotorRAG.obtener()
-    except Exception as e:
-        print(f"Aviso en startup: {e}")
+# ------------------------------------------------------------------
+# 2. HEALTH CHECK — Render lo usa para saber que estás vivo
+# ------------------------------------------------------------------
+@app.get("/")
+@app.get("/health")
+async def health():
+    return {"status": "alive", "service": "guardian-paramo"}
 
-class PreguntaRequest(BaseModel):
+# ------------------------------------------------------------------
+# 3. MODELOS
+# ------------------------------------------------------------------
+class ChatRequest(BaseModel):
     pregunta: str
     historial: Optional[List[dict]] = None
     filtro_tema: Optional[str] = None
 
-@app.post("/api/chat")
-def chat(body: PreguntaRequest):
+# ------------------------------------------------------------------
+# 4. LAZY LOADING: el motor pesado solo se toca cuando llega un usuario
+# ------------------------------------------------------------------
+_motor_listo = False
+
+def _inicializar_motor():
+    """Carga pesada bajo demanda y una sola vez."""
+    global _motor_listo
+    if _motor_listo:
+        return
+
+    # Import diferido: estas librerías consumen RAM y tardan en cargar
+    from nucleo_chat import MotorRAG
+    MotorRAG.obtener()   # aquí conecta con Qdrant y HuggingFace
+    _motor_listo = True
+
+# ------------------------------------------------------------------
+# 5. ENDPOINTS DE NEGOCIO
+# ------------------------------------------------------------------
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    try:
+        _inicializar_motor()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Motor no listo: {exc}")
+
+    from nucleo_chat import responder_stream
+
+    def generador():
+        for trozo in responder_stream(
+            pregunta=req.pregunta,
+            historial=req.historial,
+            filtro_tema=req.filtro_tema
+        ):
+            yield trozo
+
     return StreamingResponse(
-        core.responder_stream(body.pregunta, body.historial, body.filtro_tema),
-        media_type="text/event-stream"
+        generador(),
+        media_type="application/x-ndjson"
     )
 
-@app.get("/api/temas")
-def temas():
+@app.get("/temas")
+async def temas():
     try:
-        return {"temas": core.listar_temas()}
-    except Exception:
-        return {"temas": []}
+        _inicializar_motor()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
-@app.get("/", response_class=HTMLResponse)
-def index(request: Request):
-    if templates and os.path.exists("templates/index.html"):
-        return templates.TemplateResponse("index.html", {"request": request})
-    return HTMLResponse("<h3>Servidor del Guardián del Páramo activo correctamente.</h3>")
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("app:app", host="0.0.0.0", port=port)
+    from nucleo_chat import listar_temas
+    return {"temas": listar_temas()}
