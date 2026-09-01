@@ -15,4 +15,4 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY nucleo_chat.py app.py ./
 
 # 3. Render inyecta $PORT automáticamente
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info"]
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000} --log-level info"]
