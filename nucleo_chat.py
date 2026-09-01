@@ -20,7 +20,7 @@ COLLECTION_NAME = "conocimiento_paramo"
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-CHAT_MODEL = "llama-3.1-8b-instant"
+CHAT_MODEL = "openai/gpt-oss-20b"
 TEMPERATURA = 0.5
 CHUNKS_A_RECUPERAR = 6
 MAX_TURNOS_HISTORIAL = 4
