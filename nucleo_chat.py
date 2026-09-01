@@ -124,20 +124,40 @@ Si no está en el contexto, dilo de frente: «Uy, ahí sí le quedo mal...»
 </conocimiento_recuperado>"""
 
 
-class CustomHuggingFaceAPIEmbeddings(Embeddings):  # <-- FIX: hereda de Embeddings
+class CustomHuggingFaceAPIEmbeddings(Embeddings):
     def __init__(self, api_key: str, model_name: str):
         self.api_key = api_key
-        self.api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_name}"
+        # FIX 1: URL actualizada al router oficial de Hugging Face
+        self.api_url = f"https://router.huggingface.co/hf-inference/models/{model_name}/pipeline/feature-extraction"
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        response = requests.post(self.api_url, headers=headers, json={"inputs": texts, "options": {"wait_for_model": True}})
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "inputs": texts,
+            "options": {"wait_for_model": True}
+        }
+        
+        response = requests.post(self.api_url, headers=headers, json=payload, timeout=30)
+        
         if response.status_code != 200:
-            raise Exception(f"Error en API de Hugging Face: {response.text}")
-        return response.json()
+            raise Exception(f"Error en API de Hugging Face ({response.status_code}): {response.text}")
+            
+        res = response.json()
+        
+        # FIX 2: Aplanamiento si la API retorna vectores con dimensión de token adicional
+        if isinstance(res, list) and len(res) > 0:
+            if isinstance(res[0], list) and len(res[0]) > 0 and isinstance(res[0][0], list):
+                # Si viene con forma [batch_size, seq_len, hidden_dim], tomar el promedio (mean pooling)
+                res = [[sum(col) / len(col) for col in zip(*doc)] for doc in res]
+                
+        return res
 
     def embed_query(self, text: str) -> List[float]:
-        return self.embed_documents([text])[0]
+        result = self.embed_documents([text])
+        return result[0]
 
 
 class MotorRAG:
